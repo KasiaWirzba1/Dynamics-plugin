@@ -7,7 +7,6 @@
 import sys
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.resolve()))
-
 from pymol import plugins
 from version import VERSION
 import pymol_plugin_dynamics

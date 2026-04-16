@@ -1,0 +1,7 @@
+{
+    "host": "your.hpc.server.pl",
+    "user": "your_username",
+    "remote_path": "/home/your_username/dynamics_jobs",
+    "queue": "default",
+    "molequeue_port": 17243
+}

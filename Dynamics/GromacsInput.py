@@ -2,6 +2,8 @@ import pymol_plugin_dynamics
 import os
 import shutil
 # This class is responsible for performing molecular dynamics simulation with GROMACS tools.
+
+#Są to domyśle ustawienia symulacji, które użytkownik może zmienić przez GUI
 class GromacsInput:
     force = 1
     water = 1
@@ -20,6 +22,7 @@ class GromacsInput:
     negative_ion = "CL"
     command_distinction = "\n!************************!\n"
 
+    #Aktualizacja ustawień. Przyjmuje słownik z nowymi ustawieniami i aktualizuje zmienne klasy.
     # This function will change given variabless stored by the class (needed for lambda statements)
     def update(self, gmx_options):
         for key, value in gmx_options.items():
@@ -52,6 +55,7 @@ class GromacsInput:
         #        save_options()
         print("gromacs updated")
 
+    #Tworzenie pierwszej topologii, pierwszy krok symulacji.
     # This function will create initial topology and trajectory using pdb file and choosen force field
     def pdb2top(self, s_params):
         status = ["ok", "Calculating topology using Force fields"]
@@ -73,6 +77,7 @@ class GromacsInput:
         command = "{0} pdb2gmx -f {1}.pdb -o {1}.gro -p {1}.top {2}".format(gmx_cmd, project_name, hh)
         pymol_plugin_dynamics.execute_and_monitor_subprocess(command, 'gromacs_stdin.txt', 'log1.txt', 'log.txt')
 
+        #Obsługa błędu - jeśli .gro nie powstał, próbuje jeszcze raz z flagą -ignh, która ignoruje niepotrzebne atomy wodoru.
         if os.path.isfile("{}.gro".format(project_name)):
             status = ["ok", ""]
         else:

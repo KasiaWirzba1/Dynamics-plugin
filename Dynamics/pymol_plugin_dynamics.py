@@ -393,6 +393,8 @@ def status_update(input_status):
 
 
 # This function will start real workflow of the plugin, once everything is set
+#Pobiera nazwę projektu, ścieżkę do folderu, ustawia go jako aktywny katalog.
+#Potem idzie przez 10 kroków jeden po drugim, każdy z tym samym wzorcem:
 def dynamics(s_params):
     print("Starting PyMOL plugin 'dynamics' ver. {}".format(plugin_ver))    
     status = ["ok", ""]
@@ -405,7 +407,8 @@ def dynamics(s_params):
     print(vectors_prody)
     os.chdir(project_dir)
     stop = 0
-    
+
+    #Zapisuje pliki .mdp
     # Saving configuration files
     if status[0] == "ok" and stop == 0 and progress.to_do[0] == 1:
         mdp_files(s_params)
@@ -511,6 +514,23 @@ def dynamics(s_params):
         print(status[1])        
         if stop == 0:
             error_message(s_params)
+
+#Wszystkie te kroki — `pdb2top`, `waterbox`, `em`, `md` itd. — są metodami obiektu `gromacs2`,
+# który jest klasy `GromacsInput`. To znaczy że **prawdziwe wywołania subprocess** siedzą w pliku
+# `GromacsInput.py`, nie tutaj!
+#Kroki w kolejności funkcji dynamics:
+#| Nr | Co robi |
+#|---|---|
+#| 0 | Zapisuje pliki .mdp (konfiguracja) |
+#| 1 | `pdb2top` — tworzy topologię |
+#| 2 | `waterbox` — dodaje wodę |
+#| 3 | `saltadd` — dodaje jony |
+#| 4 | `em` — minimalizacja energii |
+#| 5 | `pr` — Position Restrained MD |
+#| 6 | `restraints` — więzy atomów |
+#| 7 | `md` — właściwa symulacja MD ⭐ |
+#| 8 | `trjconv` — konwertuje trajektorię |
+#| 9 | ProDy — wektory (opcjonalne) |
 
 
 # Saving configuration files

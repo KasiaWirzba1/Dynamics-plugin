@@ -18,6 +18,8 @@ class SimulationParameters:
     em_file = ""
     pr_file = ""
     md_file = ""
+    remote_mode = False
+
 
     def __init__(self):
         self.gmx_output = GromacsOutput.GromacsOutput()
@@ -27,6 +29,7 @@ class SimulationParameters:
             self.vectors_prody = Vectors.Vectors()
             print("ProDy correctly imported")
         self.progress = ProgressStatus.ProgressStatus()
+        self.remote_mode = False
 
     def create_cfg_files(self):
         self.em_file, self.pr_file, self.md_file = pymol_plugin_dynamics.create_config_files(self.project_name)
