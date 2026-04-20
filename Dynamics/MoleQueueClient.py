@@ -1,6 +1,6 @@
-# MoleQueueClient.py
+# MoleQueueClient1.py
 # This module handles communication with the local MoleQueue daemon
-# using JSON-RPC 2.0 over a local socket.
+# using JSON-RPC 2.0 over a Unix domain socket.
 
 import socket
 import json
@@ -9,31 +9,32 @@ import os
 class MoleQueueClient:
     """
     Client for communicating with a local MoleQueue daemon.
-    MoleQueue uses JSON-RPC 2.0 over a local TCP socket.
+    MoleQueue uses JSON-RPC 2.0 over a Unix domain socket.
     """
 
-    def __init__(self, host="localhost", port=17243):
-        self.host = host
-        self.port = port
+    def __init__(self, socket_path="/tmp/MoleQueue"):
+        self.socket_path = socket_path
         self.socket = None
         self.request_id = 0
 
     # ─────────────────────────────────────────────
     # CONNECTION
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
 
     def connect(self):
-        """Open connection to local MoleQueue daemon."""
         try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.connect((self.host, self.port))
-            print("MoleQueueClient: connected to MoleQueue on port {}".format(self.port))
+            self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.socket.connect(self.socket_path)
+            self.socket.settimeout(5.0)
+            print("MoleQueueClient: connected to MoleQueue via {}".format(self.socket_path))
             return True
-        except ConnectionRefusedError:
-            print("MoleQueueClient: ERROR — could not connect to MoleQueue.")
-            print("Make sure MoleQueue is installed and running.")
+        except FileNotFoundError:
+            print("MoleQueueClient: ERROR — socket not found")
             return False
-
+        except Exception as e:
+            print("MoleQueueClient: ERROR — {}".format(e))
+            return False
+     
     def disconnect(self):
         """Close connection to MoleQueue daemon."""
         if self.socket:
@@ -51,69 +52,60 @@ class MoleQueueClient:
         return self.request_id
 
     def _send_request(self, method, params):
-        """
-        Send a JSON-RPC 2.0 request and return the response.
-        JSON-RPC format:
-        {
-            "jsonrpc": "2.0",
-            "method": "methodName",
-            "params": { ... },
-            "id": 1
-        }
-        """
+        """Send a JSON-RPC 2.0 request and return the response."""
         request = {
             "jsonrpc": "2.0",
             "method": method,
             "params": params,
             "id": self._next_id()
         }
-        message = json.dumps(request) + "\n"
+        message = json.dumps(request).encode("utf-8")
+	#Prefiks 4 bajtów = długość pakietu
+        length = len(message).to_bytes(4, byteorder='big')
         try:
-            self.socket.sendall(message.encode("utf-8"))
+            self.socket.sendall(length + message)
             response_raw = self._receive_response()
-            response = json.loads(response_raw)
-            return response
+            if response_raw:
+                return json.loads(response_raw)
+            else:
+                print("MoleQueueClient: pusta odpowiedź od MoleQueue")
+                return None
         except Exception as e:
             print("MoleQueueClient: ERROR sending request — {}".format(e))
             return None
 
     def _receive_response(self):
-        """Read response from socket until newline."""
-        data = b""
-        while True:
-            chunk = self.socket.recv(4096)
-            if not chunk:
-                break
-            data += chunk
-            if b"\n" in data:
-                break
-        return data.decode("utf-8").strip()
+        """Read response from socket until newline, with timeout."""
+        self.socket.settimeout(5.0)
+        try:
+            raw_len = self.socket.recv(4)
+            if not raw_len or len(raw_len) < 4:
+                return None
+            length = int.from_bytes(raw_len, byteorder='big')
+            #Odczytaj dokładnie tyle bajtów
+            data = b""
+            while len(data) < length:
+                chunk = self.socket.recv(length - len(data))
+                if not chunk:
+                    break
+                data += chunk
+            return data.decode("utf-8")
+        except socket.timeout:
+            print("MoleQueueClient: timeout czekając na odpowiedź")
+            return None
 
     # ─────────────────────────────────────────────
     # JOB SUBMISSION
     # ─────────────────────────────────────────────
 
     def submit_job(self, queue, program, input_files, project_name):
-        """
-        Submit a job to MoleQueue.
-
-        Parameters:
-            queue        -- name of the PBS queue on the remote server
-            program      -- program to run (e.g. "GROMACS")
-            input_files  -- list of local file paths to send
-            project_name -- name of the project (used as job name)
-
-        Returns:
-            job_id if successful, None if failed
-        """
+        """Submit a job to MoleQueue."""
         params = {
             "queue": queue,
             "program": program,
             "description": "Dynamics PyMOL Plugin — {}".format(project_name),
-            "inputAsPath": os.path.dirname(input_files[0]) if input_files else "",
-            "inputFiles": input_files,
+            "localWorkingDirectory": os.path.dirname(input_files[0]) if input_files else "",
         }
-
         print("MoleQueueClient: submitting job '{}' to queue '{}'".format(project_name, queue))
         response = self._send_request("submitJob", params)
 
@@ -131,16 +123,7 @@ class MoleQueueClient:
     # ─────────────────────────────────────────────
 
     def get_job_status(self, job_id):
-        """
-        Check the status of a submitted job.
-
-        Possible statuses returned by MoleQueue:
-            "Accepted", "QueuedLocal", "Submitted",
-            "QueuedRemote", "RunningRemote", "Finished",
-            "Error", "Canceled"
-
-        Returns status string or None if failed.
-        """
+        """Check the status of a submitted job."""
         params = {"moleQueueId": job_id}
         response = self._send_request("lookupJob", params)
 
@@ -157,13 +140,7 @@ class MoleQueueClient:
     # ─────────────────────────────────────────────
 
     def retrieve_results(self, job_id, destination_path):
-        """
-        Ask MoleQueue to copy results to a local destination path.
-
-        Parameters:
-            job_id           -- MoleQueue job ID
-            destination_path -- local folder where results should be saved
-        """
+        """Ask MoleQueue to copy results to a local destination path."""
         params = {
             "moleQueueId": job_id,
             "outputDirectory": destination_path

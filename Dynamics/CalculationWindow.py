@@ -36,10 +36,60 @@ class CalculationWindow:
         project_name = s_params.project_name
         if project_name != "nothing":
             master.destroy()
-            root = Toplevel(g_parent)
-            self.window(root, s_params, status, g_parent)
+            self._ask_mode_and_open(g_parent, s_params, status)
         elif project_name == "nothing":
             pymol_plugin_dynamics.no_molecule_warning()
+
+    def _ask_mode_and_open(self, g_parent, s_params, status):
+        """Show a dialog asking the user to choose Local or Remote mode."""
+        dialog = Toplevel(g_parent)
+        dialog.title("Choose Calculation Mode")
+        dialog.resizable(False, False)
+        dialog.grab_set()  # modal
+
+        Label(dialog, text="Where do you want to run the simulation?",
+              font=("Arial", 11), pady=10, padx=20).pack()
+
+        btn_frame = Frame(dialog, pady=10)
+        btn_frame.pack()
+
+        def choose_local():
+            s_params.remote_mode = False
+            dialog.destroy()
+            root = Toplevel(g_parent)
+            self.window(root, s_params, status, g_parent)
+
+        def choose_remote():
+            if not MOLEQUEUE_AVAILABLE:
+                tkMessageBox.showerror(
+                    "MoleQueue not available",
+                    "MoleQueueClient could not be imported.\n"
+                    "Check if MoleQueueClient.py is in the plugin folder."
+                )
+                return
+            s_params.remote_mode = True
+            dialog.destroy()
+            root = Toplevel(g_parent)
+            self.window(root, s_params, status, g_parent)
+
+        Button(btn_frame, text="LOCAL\n(this computer)",
+               width=18, height=3,
+               command=choose_local).pack(side=LEFT, padx=10)
+
+        Button(btn_frame, text="REMOTE\n(via MoleQueue)",
+               width=18, height=3,
+               bg="#4A90D9", fg="white",
+               activebackground="#357ABD", activeforeground="white",
+               state=NORMAL if MOLEQUEUE_AVAILABLE else DISABLED,
+               command=choose_remote).pack(side=LEFT, padx=10)
+
+        dialog.update_idletasks()
+        # Center dialog on screen
+        w = dialog.winfo_width()
+        h = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (w // 2)
+        y = (dialog.winfo_screenheight() // 2) - (h // 2)
+        dialog.geometry("+{}+{}".format(x, y))
 
     def window(self, root, s_params, status, parent):
         self.root = root
@@ -108,7 +158,8 @@ class CalculationWindow:
         for task in s_params.progress.to_do:
             tasks_nr = tasks_nr + task
         self.tasks_to_do = tasks_nr
-        self.start_counting(1, s_params)
+        # Nie startujemy automatycznie — użytkownik wybrał tryb w dialogu
+        # i kliknie START LOCAL lub START REMOTE samodzielnie
 
         thread.start_new_thread(self.bar_update, (s_params, status))
         self.bar_display(root, parent, s_params)
@@ -216,14 +267,10 @@ class CalculationWindow:
         """
         import os
         # Try to get the working directory from s_params, fall back to home
-        work_dir = os.getcwd()
+        work_dir = getattr(s_params, "work_dir",
+                           os.path.expanduser("~"))
         # Typical GROMACS input files produced by the Dynamics plugin
-        candidates = [
-            "{}.gro".format(s_params.project_name),
-            "{}.top".format(s_params.project_name),
-            "{}_em.tpr".format(s_params.project_name),
-            "{}_md.tpr".format(s_params.project_name),
-        ]
+        candidates = ["topol.tpr", "grompp.mdp", "topol.top", "conf.gro"]
         files = []
         for name in candidates:
             full = os.path.join(work_dir, name)
