@@ -4,18 +4,28 @@ from tkinter import *
 from tkinter.ttk import Progressbar, Scrollbar
 import _thread as thread
 import time
+import os
 from tkinter import messagebox as tkMessageBox
 
-# ─── MoleQueue integration ───────────────────────────────────────────────────
+# MoleQueue integration
 try:
     from MoleQueueClient import MoleQueueClient
     MOLEQUEUE_AVAILABLE = True
 except ImportError:
     MOLEQUEUE_AVAILABLE = False
-# ─────────────────────────────────────────────────────────────────────────────
-
 
 class CalculationWindow:
+    """
+    Window for running molecular dynamics calculations.
+ 
+    Allows the user to choose between local execution (GROMACS runs directly
+    on this machine) and remote execution (job is submitted to a MoleQueue
+    daemon, which forwards it to a configured HPC queue).
+ 
+    Communication between the background worker thread and the Tkinter UI
+    is handled via two thread-safe queues: queue_status and queue_percent.
+    """
+
     tasks_to_do = 0
     bar_var = ""
     bar_widget = ""
@@ -28,11 +38,14 @@ class CalculationWindow:
         self.queue_status = Queue.Queue()
         self.queue_percent = Queue.Queue()
 
-    # ─────────────────────────────────────────────
     # WINDOW CREATION
-    # ─────────────────────────────────────────────
 
     def check_window(self, master, g_parent, s_params, status):
+	"""
+        Entry point called from the main plugin window when the user clicks OK.
+        Destroys the main window and opens the mode selection dialog.
+        Shows a warning if no molecule has been selected.
+        """
         project_name = s_params.project_name
         if project_name != "nothing":
             master.destroy()
@@ -41,7 +54,11 @@ class CalculationWindow:
             pymol_plugin_dynamics.no_molecule_warning()
 
     def _ask_mode_and_open(self, g_parent, s_params, status):
-        """Show a dialog asking the user to choose Local or Remote mode."""
+	"""
+        Show a modal dialog asking the user to choose Local or Remote mode.
+        Sets s_params.remote_mode accordingly and then opens the calculation window.
+        The REMOTE button is disabled automatically if MoleQueueClient is not available.
+        """
         dialog = Toplevel(g_parent)
         dialog.title("Choose Calculation Mode")
         dialog.resizable(False, False)
@@ -92,7 +109,11 @@ class CalculationWindow:
         dialog.geometry("+{}+{}".format(x, y))
 
     def window(self, root, s_params, status, parent):
-        self.root = root
+        """
+        Build and display the main calculation window with progress bar and control buttons.
+        The simulation does not start automatically — the user must click START LOCAL or START REMOTE.
+        """
+	self.root = root
         self.parent = parent
         frame1 = Frame(root)
         frame1.pack(side=TOP)
@@ -122,7 +143,7 @@ class CalculationWindow:
             stop_button.configure(state=DISABLED)
         self.stop_button = stop_button
 
-        # ── START LOCAL ──────────────────────────────────────────────────────
+        #START LOCAL
         start_button = Button(frame2, text="START LOCAL",
                               command=lambda: self.start_counting(1, s_params))
         start_button.pack(side=LEFT)
@@ -130,7 +151,7 @@ class CalculationWindow:
             start_button.configure(state=DISABLED)
         self.start_button = start_button
 
-        # ── START REMOTE (MoleQueue) ─────────────────────────────────────────
+        #START REMOTE (MoleQueue)
         start_remote_button = Button(
             frame2,
             text="START REMOTE",
@@ -158,18 +179,20 @@ class CalculationWindow:
         for task in s_params.progress.to_do:
             tasks_nr = tasks_nr + task
         self.tasks_to_do = tasks_nr
-        # Nie startujemy automatycznie — użytkownik wybrał tryb w dialogu
-        # i kliknie START LOCAL lub START REMOTE samodzielnie
+        # Simulation does not start automatically — the user clicks START LOCAL
+        # or START REMOTE after the mode selection dialog.
 
         thread.start_new_thread(self.bar_update, (s_params, status))
         self.bar_display(root, parent, s_params)
 
-    # ─────────────────────────────────────────────
     # LOCAL EXECUTION
-    # ─────────────────────────────────────────────
+    #
 
     def start_counting(self, value, s_params):
-        """Start or stop a LOCAL GROMACS calculation."""
+        """
+        Start (value=1) or stop (value=0) a local GROMACS calculation.
+        Runs pymol_plugin_dynamics.dynamics() in a separate thread.
+        """
         if value == 1:
             stop = 0
             thread.start_new_thread(pymol_plugin_dynamics.dynamics, (s_params,))
@@ -185,12 +208,14 @@ class CalculationWindow:
                 self.start_remote_button.configure(state=ACTIVE)
             self.log_button.configure(state=ACTIVE)
 
-    # ─────────────────────────────────────────────
+
     # REMOTE EXECUTION via MoleQueue
-    # ─────────────────────────────────────────────
 
     def start_counting_remote(self, s_params):
-        """Submit a job to MoleQueue and monitor its status."""
+	"""
+        Initiate remote job submission via MoleQueue.
+        Disables buttons and launches _remote_worker in a background thread.
+        """
         self.stop_button.configure(state=ACTIVE)
         self.start_button.configure(state=DISABLED)
         self.start_remote_button.configure(state=DISABLED)
@@ -241,7 +266,7 @@ class CalculationWindow:
 
         self.bar_var.set("MoleQueue: job submitted (ID={})".format(job_id))
 
-        # ── Poll for status ───────────────────────────────────────────────
+        #  Poll for status
         terminal_states = {"Finished", "Error", "Canceled", "CanceledBeforeSubmission"}
         while True:
             time.sleep(5)
@@ -262,10 +287,9 @@ class CalculationWindow:
 
     def _collect_input_files(self, s_params):
         """
-        Returns a list of input file paths for the MoleQueue job.
-        Adjust this method to match where Dynamics writes its input files.
+        Returns a list of GROMACS input file paths for the MoleQueue job,
+        based on the project working directory determined by the Dynamics plugin.
         """
-        import os
         # Try to get the working directory from s_params, fall back to home
         work_dir = getattr(s_params, "work_dir",
                            os.path.expanduser("~"))
@@ -288,11 +312,13 @@ class CalculationWindow:
         if MOLEQUEUE_AVAILABLE:
             self.start_remote_button.configure(state=ACTIVE)
 
-    # ─────────────────────────────────────────────
     # STATUS BAR
-    # ─────────────────────────────────────────────
 
     def bar_update(self, s_params, status):
+        """
+        Background thread that monitors simulation progress and pushes
+        percent completion and final status into the thread-safe queues.
+        """
         percent = 0.0
         while s_params.stop:
             time.sleep(0.5)
@@ -306,7 +332,12 @@ class CalculationWindow:
                 self.queue_status.put("User Stoped")
 
     def bar_display(self, root, parent, s_params):
-        try:
+        """
+        Tkinter-safe polling loop (runs in the main thread via root.after).
+        Reads status and percent from the queues and updates the UI.
+        On completion opens the Interpretation Window; on error shows a dialog.
+        """
+	try:
             status = self.queue_status.get(block=False)
             self.bar_var.set(status)
         except Queue.Empty:

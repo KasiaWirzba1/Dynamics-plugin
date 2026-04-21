@@ -9,7 +9,10 @@ import os
 class MoleQueueClient:
     """
     Client for communicating with a local MoleQueue daemon.
+ 
     MoleQueue uses JSON-RPC 2.0 over a Unix domain socket.
+    Each request is prefixed with a 4-byte big-endian length header,
+    followed by the UTF-8 encoded JSON payload.
     """
 
     def __init__(self, socket_path="/tmp/MoleQueue"):
@@ -17,11 +20,14 @@ class MoleQueueClient:
         self.socket = None
         self.request_id = 0
 
-    # ─────────────────────────────────────────────
+
     # CONNECTION
-    # ────────────────────────────────────────────
 
     def connect(self):
+        """
+        Connect to the MoleQueue daemon via Unix domain socket.
+        Returns True on success, False on failure.
+        """
         try:
             self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.socket.connect(self.socket_path)
@@ -42,9 +48,8 @@ class MoleQueueClient:
             self.socket = None
             print("MoleQueueClient: disconnected.")
 
-    # ─────────────────────────────────────────────
+
     # JSON-RPC HELPERS
-    # ─────────────────────────────────────────────
 
     def _next_id(self):
         """Generate a unique request ID."""
@@ -52,7 +57,11 @@ class MoleQueueClient:
         return self.request_id
 
     def _send_request(self, method, params):
-        """Send a JSON-RPC 2.0 request and return the response."""
+        """
+        Send a JSON-RPC 2.0 request and return the parsed response.
+        The message is prefixed with a 4-byte big-endian length header.
+        Returns None if the request fails or the response is empty.
+        """
         request = {
             "jsonrpc": "2.0",
             "method": method,
@@ -75,7 +84,12 @@ class MoleQueueClient:
             return None
 
     def _receive_response(self):
-        """Read response from socket until newline, with timeout."""
+        """
+        Read a response from the socket.
+        First reads the 4-byte length header, then reads exactly that many bytes.
+        Returns the decoded UTF-8 string, or None on timeout or connection loss.
+        """
+
         self.socket.settimeout(5.0)
         try:
             raw_len = self.socket.recv(4)
@@ -94,12 +108,24 @@ class MoleQueueClient:
             print("MoleQueueClient: timeout czekając na odpowiedź")
             return None
 
-    # ─────────────────────────────────────────────
     # JOB SUBMISSION
-    # ─────────────────────────────────────────────
+
 
     def submit_job(self, queue, program, input_files, project_name):
-        """Submit a job to MoleQueue."""
+	"""
+        Submit a job to MoleQueue.
+ 
+        Args:
+            queue (str): Name of the MoleQueue queue (e.g. "Local").
+            program (str): Name of the program as configured in MoleQueue (e.g. "GROMACS").
+            input_files (list): List of input file paths. The first file's directory
+                                is used as the local working directory.
+            project_name (str): Name of the project, used in the job description.
+ 
+        Returns:
+            int or None: The MoleQueue job ID on success, or None on failure.
+        """
+
         params = {
             "queue": queue,
             "program": program,
@@ -118,12 +144,19 @@ class MoleQueueClient:
             print("Response: {}".format(response))
             return None
 
-    # ─────────────────────────────────────────────
+
     # JOB STATUS
-    # ─────────────────────────────────────────────
 
     def get_job_status(self, job_id):
-        """Check the status of a submitted job."""
+	"""
+        Check the status of a submitted job.
+ 
+        Args:
+            job_id (int): The MoleQueue job ID returned by submit_job().
+ 
+        Returns:
+            str or None: The job state string (e.g. "Finished", "Error"), or None on failure.
+        """
         params = {"moleQueueId": job_id}
         response = self._send_request("lookupJob", params)
 
@@ -135,12 +168,19 @@ class MoleQueueClient:
             print("MoleQueueClient: ERROR — could not get job status.")
             return None
 
-    # ─────────────────────────────────────────────
     # RESULT RETRIEVAL
-    # ─────────────────────────────────────────────
 
     def retrieve_results(self, job_id, destination_path):
-        """Ask MoleQueue to copy results to a local destination path."""
+        """
+        Ask MoleQueue to copy job results to a local destination path.
+ 
+        Args:
+            job_id (int): The MoleQueue job ID.
+            destination_path (str): Local directory where results should be copied.
+ 
+        Returns:
+            bool: True on success, False on failure.
+        """
         params = {
             "moleQueueId": job_id,
             "outputDirectory": destination_path
