@@ -49,7 +49,8 @@ class CalculationWindow:
         project_name = s_params.project_name
         if project_name != "nothing":
             master.destroy()
-            self._ask_mode_and_open(g_parent, s_params, status)
+            root = Toplevel(g_parent)
+            self.window(root, s_params, status, g_parent)
         elif project_name == "nothing":
             pymol_plugin_dynamics.no_molecule_warning()
 
@@ -144,8 +145,6 @@ class CalculationWindow:
         start_button = Button(frame2, text="START LOCAL",
                               command=lambda: self.start_counting(1, s_params))
         start_button.pack(side=LEFT)
-        if stop == 0:
-            start_button.configure(state=DISABLED)
         self.start_button = start_button
 
         start_remote_button = Button(
@@ -158,8 +157,6 @@ class CalculationWindow:
             activeforeground="white"
         )
         start_remote_button.pack(side=LEFT)
-        if stop == 0:
-            start_remote_button.configure(state=DISABLED)
         if not MOLEQUEUE_AVAILABLE:
             start_remote_button.configure(state=DISABLED)
         self.start_remote_button = start_remote_button
